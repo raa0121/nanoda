@@ -1,3 +1,6 @@
 .DS_Store
 model
 voicevox_core
+apps/voicevox/voicevox-out
+apps/voicevox/voicevox
+apps/voicevox/voicevox.exe

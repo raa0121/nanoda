@@ -33,6 +33,19 @@ io.Copy(f, wav)
 
 その他 `examples` ディレクトリにサンプルコードを置いていますので、ご活用ください。
 
+## GUIアプリケーション
+
+`apps/voicevox` に、[guigui](https://github.com/guigui-gui/guigui)とnanodaでVOICEVOXのエディタを再現したデスクトップアプリケーションを置いています。キャラクター選択・台本・アクセント編集・パラメータ調整・WAVの書き出しが一通り動きます。詳しくは[apps/voicevox/README.md](/apps/voicevox/README.md)を参照してください。
+
+```sh
+cd apps/voicevox
+go run . -core /path/to/libvoicevox_core.dylib -dict /path/to/open_jtalk_dic_utf_8-1.11 -models /path/to/model
+```
+
+`-core` を省略すると、VOICEVOX COREが無くても画面と操作を確認できるデモエンジンで起動します。
+
+なお `apps/voicevox` はguiguiやEbitengineへの依存をライブラリ側に持ち込まないよう、別のGoモジュールにしてあります。
+
 ## 動作環境
 
 ```
