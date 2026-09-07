@@ -6,12 +6,15 @@ import (
 	"os"
 	"path"
 	"unsafe"
+
+	"github.com/aethiopicuschan/nanoda/internal/strings"
 )
 
 type voicevoxVoiceModel struct {
-	ptr   uintptr
-	id    string
-	metas []meta
+	ptr uintptr
+	// 音声モデルID VOICEVOX CORE 0.16では16バイトのUUIDとして扱う
+	id    [16]byte
+	metas []characterMeta
 }
 
 // vvmファイルを読み込み構築する
@@ -26,13 +29,16 @@ func (v *Voicevox) loadVVMs(modelPath string) (vvms []voicevoxVoiceModel, err er
 		}
 		fp := path.Join(modelPath, file.Name())
 		vvm := voicevoxVoiceModel{}
-		if code := v.voicevoxVoiceModelNewFromPath(fp, uintptr(unsafe.Pointer(&vvm.ptr))); code != VOICEVOX_RESULT_OK {
+		if code := v.voicevoxVoiceModelFileOpen(fp, uintptr(unsafe.Pointer(&vvm.ptr))); code != VOICEVOX_RESULT_OK {
 			err = fmt.Errorf("%s: %s", fp, v.GetMessageFromResult(code))
 			return
 		}
-		vvm.id = v.voicevoxVoiceModelId(vvm.ptr)
-		raw := v.voicevoxVoiceModelGetMetasJson(vvm.ptr)
-		if err = json.Unmarshal([]byte(raw), &vvm.metas); err != nil {
+		v.voicevoxVoiceModelFileId(vvm.ptr, uintptr(unsafe.Pointer(&vvm.id)))
+		ptr := v.voicevoxVoiceModelFileCreateMetasJson(vvm.ptr)
+		raw := strings.GoStringFromUintptr(ptr)
+		err = json.Unmarshal([]byte(raw), &vvm.metas)
+		v.voicevoxJsonFree(ptr)
+		if err != nil {
 			return
 		}
 		vvms = append(vvms, vvm)
@@ -43,17 +49,17 @@ func (v *Voicevox) loadVVMs(modelPath string) (vvms []voicevoxVoiceModel, err er
 // vvmを破棄する
 func (v *Voicevox) deleteVVMs() {
 	for _, vvm := range v.vvms {
-		v.voicevoxVoiceModelDelete(vvm.ptr)
+		v.voicevoxVoiceModelFileDelete(vvm.ptr)
 	}
 	v.vvms = nil
 }
 
 type findOptions struct {
-	all         bool
-	byStyleId   bool
-	bySpeakerId bool
-	styleId     StyleId
-	speakerId   SpeakerId
+	all           bool
+	byStyleId     bool
+	byCharacterId bool
+	styleId       StyleId
+	characterId   CharacterId
 }
 
 func withFindAll() func(*findOptions) {
@@ -69,11 +75,32 @@ func withFindByStyleId(styleId StyleId) func(*findOptions) {
 	}
 }
 
-func withFindBySpeakerId(speakerId SpeakerId) func(*findOptions) {
+func withFindByCharacterId(characterId CharacterId) func(*findOptions) {
 	return func(o *findOptions) {
-		o.bySpeakerId = true
-		o.speakerId = speakerId
+		o.byCharacterId = true
+		o.characterId = characterId
 	}
+}
+
+// 音声モデルが条件に合致するかどうかを判定する
+func (vvm *voicevoxVoiceModel) matches(opt findOptions) bool {
+	if opt.all {
+		return true
+	}
+	for _, meta := range vvm.metas {
+		if opt.byCharacterId && meta.SpeakerUuid == opt.characterId {
+			return true
+		}
+		if !opt.byStyleId {
+			continue
+		}
+		for _, style := range meta.Styles {
+			if style.Id == opt.styleId {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // 音声モデルを逆引きする
@@ -83,21 +110,8 @@ func (v *Voicevox) findVVMs(options ...func(*findOptions)) (vvms []voicevoxVoice
 		o(&opt)
 	}
 	for _, vvm := range v.vvms {
-		if opt.all {
+		if vvm.matches(opt) {
 			vvms = append(vvms, vvm)
-			continue
-		}
-		for _, meta := range vvm.metas {
-			if opt.bySpeakerId && meta.SpeakerUuid == opt.speakerId {
-				vvms = append(vvms, vvm)
-				continue
-			}
-			for _, style := range meta.Styles {
-				if opt.byStyleId && style.Id == opt.styleId {
-					vvms = append(vvms, vvm)
-					return
-				}
-			}
 		}
 	}
 	if len(vvms) == 0 {
@@ -109,7 +123,7 @@ func (v *Voicevox) findVVMs(options ...func(*findOptions)) (vvms []voicevoxVoice
 // 音声モデルを読み込む(内部用)
 func (s *Synthesizer) load(vvms []voicevoxVoiceModel) (err error) {
 	for _, vvm := range vvms {
-		loaded := s.v.voicevoxSynthesizerIsLoadedVoiceModel(s.synthesizer, vvm.id)
+		loaded := s.v.voicevoxSynthesizerIsLoadedVoiceModel(s.synthesizer, uintptr(unsafe.Pointer(&vvm.id)))
 		if !loaded {
 			code := s.v.voicevoxSynthesizerLoadVoiceModel(s.synthesizer, vvm.ptr)
 			if code != VOICEVOX_RESULT_OK {
@@ -131,14 +145,21 @@ func (s *Synthesizer) LoadModelsFromStyleId(styleId StyleId) (err error) {
 	return
 }
 
-// 話者IDを元にして音声モデルを読み込む
-func (s *Synthesizer) LoadModelsFromSpeakerId(speakerId SpeakerId) (err error) {
-	vvms, err := s.v.findVVMs(withFindBySpeakerId(speakerId))
+// キャラクターIDを元にして音声モデルを読み込む
+func (s *Synthesizer) LoadModelsFromCharacterId(characterId CharacterId) (err error) {
+	vvms, err := s.v.findVVMs(withFindByCharacterId(characterId))
 	if err != nil {
 		return
 	}
 	err = s.load(vvms)
 	return
+}
+
+// 話者IDを元にして音声モデルを読み込む
+//
+// Deprecated: VOICEVOX CORE 0.16で「話者」は「キャラクター」に改称された。LoadModelsFromCharacterIdを使うこと。
+func (s *Synthesizer) LoadModelsFromSpeakerId(speakerId SpeakerId) (err error) {
+	return s.LoadModelsFromCharacterId(speakerId)
 }
 
 // すべての音声モデルを読み込む
@@ -154,9 +175,9 @@ func (s *Synthesizer) LoadAllModels() (err error) {
 // 音声モデルをアンロードする(内部用)
 func (s *Synthesizer) unload(vvms []voicevoxVoiceModel) (err error) {
 	for _, vvm := range vvms {
-		loaded := s.v.voicevoxSynthesizerIsLoadedVoiceModel(s.synthesizer, vvm.id)
+		loaded := s.v.voicevoxSynthesizerIsLoadedVoiceModel(s.synthesizer, uintptr(unsafe.Pointer(&vvm.id)))
 		if loaded {
-			code := s.v.voicevoxSynthesizerUnloadVoiceModel(s.synthesizer, vvm.id)
+			code := s.v.voicevoxSynthesizerUnloadVoiceModel(s.synthesizer, uintptr(unsafe.Pointer(&vvm.id)))
 			if code != VOICEVOX_RESULT_OK {
 				err = s.v.newError(code)
 				return
@@ -176,14 +197,21 @@ func (s *Synthesizer) UnloadModelsFromStyleId(styleId StyleId) (err error) {
 	return
 }
 
-// 話者IDを元にして音声モデルをアンロードする
-func (s *Synthesizer) UnloadModelsFromSpeakerId(speakerId SpeakerId) (err error) {
-	vvms, err := s.v.findVVMs(withFindBySpeakerId(speakerId))
+// キャラクターIDを元にして音声モデルをアンロードする
+func (s *Synthesizer) UnloadModelsFromCharacterId(characterId CharacterId) (err error) {
+	vvms, err := s.v.findVVMs(withFindByCharacterId(characterId))
 	if err != nil {
 		return
 	}
 	err = s.unload(vvms)
 	return
+}
+
+// 話者IDを元にして音声モデルをアンロードする
+//
+// Deprecated: VOICEVOX CORE 0.16で「話者」は「キャラクター」に改称された。UnloadModelsFromCharacterIdを使うこと。
+func (s *Synthesizer) UnloadModelsFromSpeakerId(speakerId SpeakerId) (err error) {
+	return s.UnloadModelsFromCharacterId(speakerId)
 }
 
 // すべての音声モデルをアンロードする

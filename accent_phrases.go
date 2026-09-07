@@ -19,10 +19,29 @@ type Mora struct {
 
 // アクセント句
 type AccentPhrase struct {
-	Moras           []Mora `json:"moras"`
-	Accent          int    `json:"accent"`
-	PauseMora       *Mora  `json:"pause_mora"`
-	IsInterrogative bool   `json:"is_interrogative"`
+	Moras []Mora `json:"moras"`
+	// アクセント位置 1始まりで、音が下がる直前のモーラを指す
+	Accent          int   `json:"accent"`
+	PauseMora       *Mora `json:"pause_mora"`
+	IsInterrogative bool  `json:"is_interrogative"`
+}
+
+/*
+日本語のテキストを解析してアクセント句の配列を生成する
+音高・音素長は生成されないため、音声合成に用いる際はReplaceを呼んで生成しなおす必要がある
+シンセサイザを必要としないため、音声モデルを読み込む前でも利用できる
+*/
+func (v *Voicevox) Analyze(text string) (a []AccentPhrase, err error) {
+	var ptr *byte
+	code := v.voicevoxOpenJtalkRcAnalyze(v.openJtalkRc, text, uintptr(unsafe.Pointer(&ptr)))
+	if code != VOICEVOX_RESULT_OK {
+		err = v.newError(code)
+		return
+	}
+	defer v.voicevoxJsonFree(uintptr(unsafe.Pointer(ptr)))
+	j := strings.GoString(ptr)
+	err = json.Unmarshal([]byte(j), &a)
+	return
 }
 
 // アクセント句の配列を生成する

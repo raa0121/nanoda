@@ -54,7 +54,7 @@ func (v *Voicevox) NewSynthesizer(options ...func(*SynthesizerOption)) (s Synthe
 	for _, o := range options {
 		o(&opt)
 	}
-	code := v.voicevoxSynthesizerNewWithInitialize(v.openJtalkRc, *(*uintptr)(unsafe.Pointer(&opt)), uintptr(unsafe.Pointer(&s.synthesizer)))
+	code := v.voicevoxSynthesizerNew(v.onnxruntime, v.openJtalkRc, *(*uintptr)(unsafe.Pointer(&opt)), uintptr(unsafe.Pointer(&s.synthesizer)))
 	if code != VOICEVOX_RESULT_OK {
 		err = v.newError(code)
 	}
@@ -66,16 +66,41 @@ func (s *Synthesizer) Close() {
 	s.v.voicevoxSynthesizerDelete(s.synthesizer)
 }
 
-// 現在読み込んでいる音声モデルのメタ情報を取得する
-func (s *Synthesizer) GetMetas() (metas []Meta, err error) {
+// 現在読み込んでいる音声モデルのキャラクターの一覧を取得する
+func (s *Synthesizer) GetCharacters() (characters []Character, err error) {
 	ptr := s.v.voicevoxSynthesizerCreateMetasJson(s.synthesizer)
 	defer s.v.voicevoxJsonFree(ptr)
 	j := strings.GoStringFromUintptr(ptr)
-	ms := []meta{}
+	ms := []characterMeta{}
 	if err = json.Unmarshal([]byte(j), &ms); err != nil {
 		return
 	}
-	metas = s.v.sortMetas(ms)
+	characters = mergeCharacters(ms)
+	return
+}
+
+// 現在読み込んでいる音声モデルのメタ情報を取得する
+//
+// Deprecated: VOICEVOX CORE 0.16で「話者」は「キャラクター」に改称された。GetCharactersを使うこと。
+func (s *Synthesizer) GetMetas() (metas []Meta, err error) {
+	characters, err := s.GetCharacters()
+	if err != nil {
+		return
+	}
+	metas = toMetas(characters)
+	return
+}
+
+/*
+現在読み込んでいる音声モデルのスタイルの一覧を取得する
+ここで取得されるスタイルのNameは「ずんだもん(あまあま)」のようなフォーマットになる
+*/
+func (s *Synthesizer) GetStyles() (styles []Style, err error) {
+	characters, err := s.GetCharacters()
+	if err != nil {
+		return
+	}
+	styles = toStyles(characters)
 	return
 }
 

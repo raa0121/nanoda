@@ -8,7 +8,12 @@ import (
 )
 
 func main() {
-	v, _ := nanoda.NewVoicevox("voicevox_core/libvoicevox_core.dylib", "voicevox_core/open_jtalk_dic_utf_8-1.11", "voicevox_core/model")
+	v, _ := nanoda.NewVoicevox(
+		"voicevox_core/c_api/lib/libvoicevox_core.dylib",
+		"voicevox_core/dict/open_jtalk_dic_utf_8-1.11",
+		"voicevox_core/models/vvms",
+		nanoda.WithOnnxruntimeDir("voicevox_core/onnxruntime/lib"),
+	)
 	s, _ := v.NewSynthesizer()
 	s.LoadModelsFromStyleId(3)
 
